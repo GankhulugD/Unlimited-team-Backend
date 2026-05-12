@@ -9,7 +9,7 @@
     "cf-types": "wrangler types"
   },
   "dependencies": {
-    "@unlimited-team/db": "file:../../packages/db",
+    "@unlimited-team/db": "*",
     "drizzle-orm": "^0.38.3",
     "hono": "^4.7.5"
   },

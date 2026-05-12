@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { createDb, schema, type ThemeConfig } from "@unlimited-team/db";
 
 type Bindings = {
@@ -8,12 +9,26 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+/** PBKDF2 iteraci — OWASP-ийн төсөөлж буй хэмжээ (шингээлтийн зөрөлтөөс хамгаална). */
 const PBKDF2_ITERATIONS = 100_000;
+/** SHA-256 deriveBits урт (256 bit = 32 byte хэш). */
 const PBKDF2_HASH_BITS = 256;
+
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    exposeHeaders: ["Content-Length"],
+    maxAge: 600,
+  }),
+);
 
 function uint8ToB64(bytes: Uint8Array): string {
   let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += globalThis.String.fromCodePoint(bytes[i]!);
+  for (let i = 0; i < bytes.length; i++)
+    binary += globalThis.String.fromCodePoint(bytes[i]!);
   return globalThis.btoa(binary);
 }
 
@@ -56,6 +71,26 @@ function normalizeSlug(raw: string): string {
 
 app.get("/", (c) => c.json({ service: "platform-api" }));
 
+/**
+ * **Admin query.** Бүх хэрэглэгчийг (`users`) өгөгдлийн сангаас жагсаалтаар буцаана.
+ * Drizzle: `.select().from(users)` — хүснэгтийн бүх багана.
+ */
+app.get("/admin/merchants", async (c) => {
+  const db = createDb(c.env.DB);
+  const rows = await db.select().from(schema.users);
+  return c.json(rows);
+});
+
+/**
+ * **Admin query.** Систем дээрх бүх дэлгүүрийг (`stores`) жагсаалтаар буцаана.
+ * Drizzle: `.select().from(stores)`.
+ */
+app.get("/admin/stores", async (c) => {
+  const db = createDb(c.env.DB);
+  const rows = await db.select().from(schema.stores);
+  return c.json(rows);
+});
+
 app.post("/auth/register", async (c) => {
   let body: unknown;
   try {
@@ -86,7 +121,10 @@ app.post("/auth/register", async (c) => {
       return c.json({ error: "role must be merchant or admin" }, 400);
     }
     if (role === "admin") {
-      return c.json({ error: "admin registration is not allowed on this endpoint" }, 403);
+      return c.json(
+        { error: "admin registration is not allowed on this endpoint" },
+        403,
+      );
     }
     resolvedRole = role;
   }
@@ -104,7 +142,10 @@ app.post("/auth/register", async (c) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("UNIQUE constraint") || message.toLowerCase().includes("unique")) {
+    if (
+      message.includes("UNIQUE constraint") ||
+      message.toLowerCase().includes("unique")
+    ) {
       return c.json({ error: "Email already registered" }, 409);
     }
     throw err;
@@ -150,7 +191,11 @@ app.post("/stores", async (c) => {
 
   let theme: ThemeConfig = {};
   if (themeConfig !== undefined) {
-    if (typeof themeConfig !== "object" || themeConfig === null || Array.isArray(themeConfig)) {
+    if (
+      typeof themeConfig !== "object" ||
+      themeConfig === null ||
+      Array.isArray(themeConfig)
+    ) {
       return c.json({ error: "themeConfig must be a JSON object" }, 400);
     }
     theme = themeConfig as ThemeConfig;
@@ -179,7 +224,10 @@ app.post("/stores", async (c) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("UNIQUE constraint") || message.toLowerCase().includes("unique")) {
+    if (
+      message.includes("UNIQUE constraint") ||
+      message.toLowerCase().includes("unique")
+    ) {
       return c.json({ error: "Store slug already in use" }, 409);
     }
     throw err;

@@ -1,7 +1,9 @@
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { createDb, schema, type ThemeConfig } from "@unlimited-team/db";
 
+/** 5 MiB (5 × 1024² байт) — зургийн upload хэмжээний дээд хязгаар. */
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 type Bindings = {
@@ -11,6 +13,17 @@ type Bindings = {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    exposeHeaders: ["Content-Length"],
+    maxAge: 600,
+  }),
+);
 
 app.use("*", async (c, next) => {
   if (c.env.DB == null) {
@@ -27,7 +40,10 @@ function normalizeSlug(raw: string): string {
     .replace(/[^a-z0-9-]/g, "");
 }
 
-function mergeTheme(current: ThemeConfig, patch: Partial<ThemeConfig>): ThemeConfig {
+function mergeTheme(
+  current: ThemeConfig,
+  patch: Partial<ThemeConfig>,
+): ThemeConfig {
   return {
     ...current,
     ...patch,
@@ -39,6 +55,38 @@ function mergeTheme(current: ThemeConfig, patch: Partial<ThemeConfig>): ThemeCon
 }
 
 app.get("/", (c) => c.json({ service: "merchant-api" }));
+
+/**
+ * **Admin query.** Бүх мерчантын нийт барааг (`products`) өгөгдлийн сангаас жагсаалтаар буцаана.
+ * Drizzle: `.select().from(products)`.
+ */
+app.get("/admin/products", async (c) => {
+  const db = createDb(c.env.DB);
+  const rows = await db.select().from(schema.products);
+  return c.json(rows);
+});
+
+/**
+ * **Admin query.** Нийт мерчант (`role = merchant`), дэлгүүр, барааны тоог `.select(...).from(...)` ашиглан тоолж буцаана.
+ */
+app.get("/admin/stats", async (c) => {
+  const db = createDb(c.env.DB);
+
+  const [merchantCount] = await db
+    .select({ total: count() })
+    .from(schema.users)
+    .where(eq(schema.users.role, "merchant"));
+
+  const [storeCount] = await db.select({ total: count() }).from(schema.stores);
+
+  const [productCount] = await db.select({ total: count() }).from(schema.products);
+
+  return c.json({
+    totalMerchants: merchantCount?.total ?? 0,
+    totalStores: storeCount?.total ?? 0,
+    totalProducts: productCount?.total ?? 0,
+  });
+});
 
 app.post("/upload", async (c) => {
   const cloudName = c.env.CLOUDINARY_CLOUD_NAME?.trim();
@@ -56,7 +104,10 @@ app.post("/upload", async (c) => {
 
   const entry = incoming.get("file");
   if (!(entry instanceof File)) {
-    return c.json({ error: 'Expected multipart form field "file" with a file' }, 400);
+    return c.json(
+      { error: 'Expected multipart form field "file" with a file' },
+      400,
+    );
   }
   if (entry.size === 0) {
     return c.json({ error: "Empty file" }, 400);
@@ -72,26 +123,80 @@ app.post("/upload", async (c) => {
   const endpoint = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
   const upstream = await fetch(endpoint, { method: "POST", body: uploadForm });
 
+  const rawText = await upstream.text();
   let payload: unknown;
   try {
-    payload = await upstream.json();
-  } catch {
-    return c.json({ error: "Invalid response from Cloudinary" }, 502);
+    payload = rawText.length ? JSON.parse(rawText) : null;
+  } catch (parseErr) {
+    const snippet =
+      rawText.length > 500 ? `${rawText.slice(0, 500)}…` : rawText;
+    console.error("[upload] Cloudinary: JSON parse алдаа", {
+      httpStatus: upstream.status,
+      parseError:
+        parseErr instanceof Error ? parseErr.message : String(parseErr),
+      bodySnippet: snippet,
+    });
+    return c.json(
+      {
+        error: "Invalid JSON from Cloudinary",
+        details: { upstreamHttpStatus: upstream.status, bodySnippet: snippet },
+      },
+      502,
+    );
   }
+
+  const obj = payload as Record<string, unknown> | null;
 
   if (!upstream.ok) {
-    const obj = payload as Record<string, unknown>;
-    const err = obj["error"];
-    const message =
+    const err = obj?.["error"];
+    const msg =
       err && typeof err === "object" && err !== null && "message" in err
         ? String((err as { message: unknown }).message)
-        : `Cloudinary upload failed (${upstream.status})`;
-    return c.json({ error: message }, 502);
+        : `HTTP ${upstream.status}`;
+    const cloudinaryHttpCode =
+      err && typeof err === "object" && err !== null && "http_code" in err
+        ? Number((err as { http_code: unknown }).http_code)
+        : undefined;
+
+    console.error("[upload] Cloudinary upload амжилтгүй", {
+      fetchHttpStatus: upstream.status,
+      cloudinaryError: err,
+      message: msg,
+      cloudinaryHttpCode,
+      responseKeys: obj && typeof obj === "object" ? Object.keys(obj) : [],
+    });
+
+    return c.json(
+      {
+        error: "Cloudinary upload failed",
+        details: {
+          message: msg,
+          upstreamHttpStatus: upstream.status,
+          ...(cloudinaryHttpCode !== undefined &&
+          !Number.isNaN(cloudinaryHttpCode)
+            ? { cloudinaryHttpCode }
+            : {}),
+        },
+      },
+      502,
+    );
   }
 
-  const secureUrl = (payload as Record<string, unknown>)["secure_url"];
+  const secureUrl = obj?.["secure_url"];
   if (typeof secureUrl !== "string") {
-    return c.json({ error: "Unexpected Cloudinary response" }, 502);
+    console.error("[upload] Cloudinary: secure_url алга", {
+      upstreamHttpStatus: upstream.status,
+      payload: obj,
+    });
+    return c.json(
+      {
+        error: "Unexpected Cloudinary response (no secure_url)",
+        details: {
+          keys: obj && typeof obj === "object" ? Object.keys(obj) : [],
+        },
+      },
+      502,
+    );
   }
 
   return c.json({ secure_url: secureUrl });
@@ -143,7 +248,10 @@ app.post("/products", async (c) => {
     return c.json({ error: "Expected JSON object" }, 400);
   }
 
-  const { storeId, name, price, description, images } = body as Record<string, unknown>;
+  const { storeId, name, price, description, images } = body as Record<
+    string,
+    unknown
+  >;
 
   if (typeof storeId !== "string" || storeId.length === 0) {
     return c.json({ error: "storeId is required" }, 400);
@@ -151,7 +259,12 @@ app.post("/products", async (c) => {
   if (typeof name !== "string" || name.trim().length === 0) {
     return c.json({ error: "name is required" }, 400);
   }
-  if (typeof price !== "number" || !Number.isFinite(price) || !Number.isInteger(price) || price < 0) {
+  if (
+    typeof price !== "number" ||
+    !Number.isFinite(price) ||
+    !Number.isInteger(price) ||
+    price < 0
+  ) {
     return c.json({ error: "price must be a non-negative integer" }, 400);
   }
 
@@ -221,7 +334,11 @@ app.patch("/stores/:id/theme", async (c) => {
   if (themeConfig === undefined) {
     return c.json({ error: "themeConfig is required" }, 400);
   }
-  if (typeof themeConfig !== "object" || themeConfig === null || Array.isArray(themeConfig)) {
+  if (
+    typeof themeConfig !== "object" ||
+    themeConfig === null ||
+    Array.isArray(themeConfig)
+  ) {
     return c.json({ error: "themeConfig must be an object" }, 400);
   }
 
