@@ -1,0 +1,10 @@
+{
+  "name": "unlimited-team-backend",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix packages/db && npm install --prefix apps/platform-api && npm install --prefix apps/merchant-api",
+    "dev:platform": "npm run dev --prefix apps/platform-api",
+    "dev:merchant": "npm run dev --prefix apps/merchant-api",
+    "db:generate": "npm run db:generate --prefix packages/db"
+  }
+}

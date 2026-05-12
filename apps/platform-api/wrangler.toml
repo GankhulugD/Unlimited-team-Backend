@@ -1,0 +1,9 @@
+name = "unlimited-team-platform-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "unlimited-db"
+database_id = "451e2383-5ce4-4965-936d-eb348af13edf"
+migrations_dir = "../../packages/db/migrations"

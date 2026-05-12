@@ -1,0 +1,21 @@
+{
+  "name": "@unlimited-team/merchant-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-types": "wrangler types"
+  },
+  "dependencies": {
+    "@unlimited-team/db": "file:../../packages/db",
+    "drizzle-orm": "^0.38.3",
+    "hono": "^4.7.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250525.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.16.0"
+  }
+}
