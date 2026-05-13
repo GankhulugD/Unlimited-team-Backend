@@ -5,6 +5,9 @@
     "packages/*",
     "apps/*"
   ],
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250525.0"
+  },
   "scripts": {
     "install:all": "npm install",
     "dev:platform": "npm run dev --prefix apps/platform-api",

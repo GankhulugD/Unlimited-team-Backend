@@ -9,6 +9,9 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   role: text("role", { enum: ["admin", "merchant"] }).notNull(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  phone: text("phone"),
 });
 
 export type ThemeConfig = {
