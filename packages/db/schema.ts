@@ -1,5 +1,6 @@
 import {
   integer,
+  primaryKey,
   sqliteTable,
   text,
 } from "drizzle-orm/sqlite-core";
@@ -18,6 +19,8 @@ export type ThemeConfig = {
   colors?: Record<string, string>;
   logoUrl?: string;
   heroImageUrl?: string;
+  /** ISO 4217 code stored for storefront / admin display. */
+  currency?: string;
 };
 
 export const stores = sqliteTable("stores", {
@@ -45,7 +48,29 @@ export const products = sqliteTable("products", {
     .$type<string[]>()
     .notNull()
     .default("[]"),
+  sku: text("sku").notNull().default(""),
+  category: text("category").notNull().default(""),
+  size: text("size").notNull().default(""),
+  status: text("status", { enum: ["live", "draft"] })
+    .notNull()
+    .default("live"),
+  inventory: integer("inventory").notNull().default(0),
+  salesCount: integer("sales_count").notNull().default(0),
+  revenue: integer("revenue").notNull().default(0),
 });
+
+export const storeCategories = sqliteTable(
+  "store_categories",
+  {
+    storeId: text("store_id")
+      .notNull()
+      .references(() => stores.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.storeId, t.name] }),
+  }),
+);
 
 export type CustomerInfo = {
   name?: string;
@@ -68,4 +93,5 @@ export const orders = sqliteTable("orders", {
   })
     .notNull()
     .default("pending"),
+  createdAt: text("created_at").notNull(),
 });
